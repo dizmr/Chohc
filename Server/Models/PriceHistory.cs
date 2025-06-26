@@ -8,5 +8,6 @@ namespace Server.Models
         public string ItemName { get; set; }
         public decimal Price { get; set; }
         public DateTime CheckedAt { get; set; }
+        public DateTime Timestamp { get; set; }
     }
 }

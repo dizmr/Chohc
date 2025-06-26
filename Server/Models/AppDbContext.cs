@@ -1,15 +1,25 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 
-namespace Server.Models
+namespace ConsoleServerCor 
 {
-    public class AppDbContext : DbContext
+    public class User
     {
-        public DbSet<PriceHistory> PriceHistories { get; set; }
+        public int Id { get; set; }
+        public string UsName { get; set; }
+    }
 
-        protected override void OnConfiguring(DbContextOptionsBuilder options)
+    public class CorsContext : DbContext
+    {
+        public DbSet<User> Users { get; set; }
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
-            options.UseMySql("server=localhost;database=tarkovdb;user=root;password=1234",
-                new MySqlServerVersion(new Version(8, 0, 23)));
+            string connectionString = "server=localhost;database=tarkovdb;" + "username=root;password=";
+            optionsBuilder.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString));
         }
     }
 }

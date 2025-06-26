@@ -9,6 +9,8 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using Server.Models;
 
 public class Item
 {
@@ -18,7 +20,7 @@ public class Item
 
     public override string ToString()
     {
-        return $"ID: {Id} | Name: {Name} | Price: {(Avg24hPrice.HasValue ? Avg24hPrice.Value.ToString() + "₽" : "No Data")}";
+        return $"ID: {Id} | Name: {Name} | Price: {(Avg24hPrice.HasValue ? Avg24hPrice.Value + "₽" : "No Data")}";
     }
 }
 
@@ -75,7 +77,7 @@ public class User
 class Program
 {
     static int port = 5582;
-    static ConcurrentDictionary<string, User> clients = new ConcurrentDictionary<string, User>();
+    static ConcurrentDictionary<string, User> clients = new();
 
     public static async Task<Item> GetFirstItem(string searchName)
     {
@@ -98,41 +100,57 @@ class Program
     static async Task Main(string[] args)
     {
         Console.WriteLine("Server started on port " + port);
-        UdpClient server = new UdpClient(port);
-        CancellationTokenSource cts = new CancellationTokenSource();
+        using var server = new UdpClient(port);
+        CancellationTokenSource cts = new();
 
-        _ = Task.Run(async () =>
+        var optionsBuilder = new DbContextOptionsBuilder<AppDbContext>();
+        optionsBuilder.UseMySql(
+            "server=localhost;port=3306;database=tarkovdb;user=root;password=",
+            ServerVersion.AutoDetect("server=localhost;port=3306;database=tarkovdb;user=root;password=")
+        );
+        using var dbContext = new AppDbContext(optionsBuilder.Options);
+
+        Console.WriteLine("Press Ctrl+C to stop the server...");
+
+        while (!cts.Token.IsCancellationRequested)
         {
-            while (!cts.Token.IsCancellationRequested)
+            var result = await server.ReceiveAsync();
+            var message = Encoding.UTF8.GetString(result.Buffer);
+            var ip = result.RemoteEndPoint;
+
+            string clientId = ip.ToString();
+            var user = clients.GetOrAdd(clientId, _ => new User("User@" + clientId, ip));
+
+            if (message.StartsWith("track:"))
             {
-                var result = await server.ReceiveAsync();
-                var message = Encoding.UTF8.GetString(result.Buffer);
-                var ip = result.RemoteEndPoint;
-
-                Task.Run(async () =>
+                string itemName = message.Substring(6).Trim();
+                var item = await GetFirstItem(itemName);
+                if (item != null)
                 {
-                    string clientId = ip.ToString();
-                    var user = clients.GetOrAdd(clientId, _ => new User("User@" + clientId, ip));
+                    user.AddTrackedItem(item);
 
-                    if (message.StartsWith("track:"))
+                    if (item.Avg24hPrice.HasValue)
                     {
-                        string itemName = message.Substring(6).Trim();
-                        var item = await GetFirstItem(itemName);
-                        if (item != null)
-                            user.AddTrackedItem(item);
-                        else
-                            Console.WriteLine($"Item not found: {itemName}");
+                        dbContext.PriceHistory.Add(new PriceHistory
+                        {
+                            ItemId = item.Id,
+                            ItemName = item.Name,
+                            Price = item.Avg24hPrice.Value,
+                            Timestamp = DateTime.Now
+                        });
+                        await dbContext.SaveChangesAsync();
+                        Console.WriteLine($"[DB] Saved price for {item.Name}: {item.Avg24hPrice.Value}₽");
                     }
-                    else if (message == "info")
-                    {
-                        user.ShowUserInfo();
-                    }
-                });
+                }
+                else
+                {
+                    Console.WriteLine($"Item not found: {itemName}");
+                }
             }
-        });
-
-        Console.WriteLine("Press Enter to stop the server...");
-        Console.ReadLine();
-        cts.Cancel();
+            else if (message == "info")
+            {
+                user.ShowUserInfo();
+            }
+        }
     }
 }
